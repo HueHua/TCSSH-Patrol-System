@@ -20,6 +20,9 @@
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 
+  <!-- Chart.js 圖表庫 -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
   <style>
     /* 避免 emoji 在某些裝置顯示過小 */
     .emoji-icon { font-family: "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol"; }
@@ -387,6 +390,21 @@
     // ==========================================
     // 後台端元件 (Backend)
     // ==========================================
+    function DashboardChart({ type, data, options }) {
+      const canvasRef = React.useRef(null);
+      const chartRef = React.useRef(null);
+
+      React.useEffect(() => {
+        if (chartRef.current) chartRef.current.destroy();
+        if (!canvasRef.current) return;
+        const ctx = canvasRef.current.getContext('2d');
+        chartRef.current = new Chart(ctx, { type, data, options: { responsive: true, maintainAspectRatio: false, ...options } });
+        return () => { if (chartRef.current) chartRef.current.destroy(); };
+      }, [type, data, options]);
+
+      return <div className="relative h-64 w-full"><canvas ref={canvasRef}></canvas></div>;
+    }
+
     function BackendView({ records, deleteRecord, updateRecord, showToast }) {
       const [filterDate, setFilterDate] = useState(new Date().toISOString().split('T')[0]);
       const [filterOffice, setFilterOffice] = useState('');
@@ -438,6 +456,37 @@
         todayViolations: records.filter(r => r.date === new Date().toISOString().split('T')[0] && r.violationCode !== '✓').length
       };
 
+      // 準備圖表資料
+      const chartData = useMemo(() => {
+        const vCounts = {};
+        const pCounts = {};
+        const oCounts = {};
+        
+        filteredRecords.forEach(r => {
+          oCounts[r.office] = (oCounts[r.office] || 0) + 1;
+          if (r.violationCode !== '✓') {
+            const vLabel = `${r.violationCode}-${VIOLATIONS.find(v => v.code === r.violationCode)?.desc.substring(0,4)}...`;
+            vCounts[vLabel] = (vCounts[vLabel] || 0) + 1;
+            pCounts[r.period] = (pCounts[r.period] || 0) + 1;
+          }
+        });
+
+        return {
+          violations: {
+            labels: Object.keys(vCounts),
+            datasets: [{ data: Object.values(vCounts), backgroundColor: ['#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16', '#22c55e', '#06b6d4'] }]
+          },
+          periods: {
+            labels: PERIODS.filter(p => p !== '其他' && p !== '午休'),
+            datasets: [{ label: '違規次數', data: PERIODS.filter(p => p !== '其他' && p !== '午休').map(p => pCounts[p] || 0), backgroundColor: '#3b82f6', borderRadius: 4 }]
+          },
+          offices: {
+            labels: OFFICES,
+            datasets: [{ label: '巡堂班次', data: OFFICES.map(o => oCounts[o] || 0), backgroundColor: '#8b5cf6', borderRadius: 4 }]
+          }
+        };
+      }, [filteredRecords]);
+
       return (
         <div className="space-y-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -452,6 +501,26 @@
             </div>
             <div className="bg-white p-4 rounded-xl shadow border text-center">
               <div className="text-gray-500 text-sm mb-1">今日違規班次</div><div className="text-3xl font-bold text-orange-500">{stats.todayViolations}</div>
+            </div>
+          </div>
+
+          {/* 視覺化圖表區 */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="bg-white p-4 rounded-xl shadow border">
+              <h3 className="text-gray-700 font-bold mb-2 text-center">各類違規佔比</h3>
+              {chartData.violations.labels.length > 0 ? (
+                <DashboardChart type="doughnut" data={chartData.violations} options={{ plugins: { legend: { position: 'bottom' } } }} />
+              ) : (
+                <div className="h-64 flex items-center justify-center text-gray-400">無違規數據</div>
+              )}
+            </div>
+            <div className="bg-white p-4 rounded-xl shadow border">
+              <h3 className="text-gray-700 font-bold mb-2 text-center">各節次違規熱區</h3>
+              <DashboardChart type="bar" data={chartData.periods} options={{ plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }} />
+            </div>
+            <div className="bg-white p-4 rounded-xl shadow border">
+              <h3 className="text-gray-700 font-bold mb-2 text-center">各處室巡堂動能</h3>
+              <DashboardChart type="bar" data={chartData.offices} options={{ indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, ticks: { stepSize: 1 } } } }} />
             </div>
           </div>
 
