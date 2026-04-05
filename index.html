@@ -15,13 +15,16 @@
   <!-- Babel (JSX 編譯器) -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   
-  <!-- Firebase (Compat 版本，免安裝工具直接載入) -->
+  <!-- Firebase (Compat 版本) -->
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 
   <!-- Chart.js 圖表庫 -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- SheetJS (Excel 解析庫) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
 
   <style>
     /* 避免 emoji 在某些裝置顯示過小 */
@@ -34,7 +37,7 @@
 
   <!-- React 應用程式代碼 -->
   <script type="text/babel">
-    const { useState, useEffect, useMemo } = React;
+    const { useState, useEffect, useMemo, useRef } = React;
 
     // ==========================================
     // 1. 雲端資料庫初始化 (Firebase)
@@ -111,9 +114,14 @@
       const addRecordsToDB = async (newRecords) => {
         if (!user) return;
         const recordsRef = db.collection('artifacts').doc(APP_ID).collection('public').doc('data').collection('patrolRecords');
-        for (const r of newRecords) {
-          await recordsRef.doc(r.id).set(r);
-        }
+        
+        // 使用 Batch 批次寫入提升效能
+        const batch = db.batch();
+        newRecords.forEach(r => {
+          const docRef = recordsRef.doc(r.id);
+          batch.set(docRef, r);
+        });
+        await batch.commit();
       };
 
       const updateRecordToDB = async (recordData) => {
@@ -140,26 +148,16 @@
                   {user && (
                     <span className="hidden md:flex items-center text-xs text-blue-200 bg-blue-900 px-2 py-1 rounded-full ml-2">
                       <span className="mr-1 emoji-icon">☁️</span>
-                      {isSyncing ? '同步中...' : '已連線雲端'}
+                      {isSyncing ? '同步中...' : '已連線'}
                     </span>
                   )}
                 </div>
                 <div className="flex items-center space-x-1 sm:space-x-4">
-                  <button 
-                    onClick={() => setCurrentView('frontend')}
-                    className={`px-3 py-2 rounded-md text-sm font-medium flex items-center transition-colors ${currentView === 'frontend' ? 'bg-blue-900 text-white' : 'text-blue-100 hover:bg-blue-700'}`}
-                  >
-                    <span className="mr-1 sm:mr-2 emoji-icon">✏️</span>
-                    <span className="hidden sm:inline">填表端</span>
-                    <span className="sm:hidden">填表</span>
+                  <button onClick={() => setCurrentView('frontend')} className={`px-3 py-2 rounded-md text-sm font-medium flex items-center transition-colors ${currentView === 'frontend' ? 'bg-blue-900 text-white' : 'text-blue-100 hover:bg-blue-700'}`}>
+                    <span className="mr-1 sm:mr-2 emoji-icon">✏️</span><span className="hidden sm:inline">填表端</span><span className="sm:hidden">填表</span>
                   </button>
-                  <button 
-                    onClick={() => setCurrentView('backend')}
-                    className={`px-3 py-2 rounded-md text-sm font-medium flex items-center transition-colors ${currentView === 'backend' ? 'bg-blue-900 text-white' : 'text-blue-100 hover:bg-blue-700'}`}
-                  >
-                    <span className="mr-1 sm:mr-2 emoji-icon">⚙️</span>
-                    <span className="hidden sm:inline">後台端</span>
-                    <span className="sm:hidden">後台</span>
+                  <button onClick={() => setCurrentView('backend')} className={`px-3 py-2 rounded-md text-sm font-medium flex items-center transition-colors ${currentView === 'backend' ? 'bg-blue-900 text-white' : 'text-blue-100 hover:bg-blue-700'}`}>
+                    <span className="mr-1 sm:mr-2 emoji-icon">⚙️</span><span className="hidden sm:inline">後台端</span><span className="sm:hidden">後台</span>
                   </button>
                 </div>
               </div>
@@ -178,7 +176,7 @@
             {currentView === 'frontend' ? (
               <FrontendView addRecords={addRecordsToDB} showToast={showToast} isSyncing={isSyncing} />
             ) : (
-              <BackendView records={records} deleteRecord={deleteRecordFromDB} updateRecord={updateRecordToDB} showToast={showToast} />
+              <BackendView records={records} addRecords={addRecordsToDB} deleteRecord={deleteRecordFromDB} updateRecord={updateRecordToDB} showToast={showToast} />
             )}
           </main>
         </div>
@@ -284,13 +282,13 @@
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">處室</label>
-                <select className="w-full border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border" value={basicInfo.office} onChange={e => updateBasicInfo('office', e.target.value)}>
+                <select className="w-full border-gray-300 rounded-md shadow-sm p-2 border" value={basicInfo.office} onChange={e => updateBasicInfo('office', e.target.value)}>
                   <option value="">請選擇</option>{OFFICES.map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">職稱</label>
-                <select className="w-full border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border" value={basicInfo.title} onChange={e => updateBasicInfo('title', e.target.value)}>
+                <select className="w-full border-gray-300 rounded-md shadow-sm p-2 border" value={basicInfo.title} onChange={e => updateBasicInfo('title', e.target.value)}>
                   <option value="">請選擇</option>{TITLES.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
@@ -340,9 +338,7 @@
             <div className="space-y-4">
               {draftRows.map(row => (
                 <div key={row.id} className="relative bg-gray-50 border border-gray-200 rounded-lg p-4 pt-8 sm:pt-4">
-                  <button onClick={() => removeRow(row.id)} className="absolute top-2 right-2 text-gray-400 hover:text-red-500 bg-white rounded-full p-1 shadow-sm" title="刪除此列">
-                    <span className="emoji-icon">❌</span>
-                  </button>
+                  <button onClick={() => removeRow(row.id)} className="absolute top-2 right-2 text-gray-400 hover:text-red-500 bg-white rounded-full p-1 shadow-sm" title="刪除此列"><span className="emoji-icon">❌</span></button>
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-start">
                     <div className="md:col-span-2">
                       <label className="block text-xs font-medium text-gray-500 mb-1 md:hidden">班級</label>
@@ -388,13 +384,13 @@
     }
 
     // ==========================================
-    // 後台端元件 (Backend)
+    // 圖表元件
     // ==========================================
     function DashboardChart({ type, data, options }) {
-      const canvasRef = React.useRef(null);
-      const chartRef = React.useRef(null);
+      const canvasRef = useRef(null);
+      const chartRef = useRef(null);
 
-      React.useEffect(() => {
+      useEffect(() => {
         if (chartRef.current) chartRef.current.destroy();
         if (!canvasRef.current) return;
         const ctx = canvasRef.current.getContext('2d');
@@ -405,11 +401,16 @@
       return <div className="relative h-64 w-full"><canvas ref={canvasRef}></canvas></div>;
     }
 
-    function BackendView({ records, deleteRecord, updateRecord, showToast }) {
+    // ==========================================
+    // 後台端元件 (Backend)
+    // ==========================================
+    function BackendView({ records, addRecords, deleteRecord, updateRecord, showToast }) {
       const [filterDate, setFilterDate] = useState(new Date().toISOString().split('T')[0]);
       const [filterOffice, setFilterOffice] = useState('');
       const [editingRecord, setEditingRecord] = useState(null);
       const [showAddModal, setShowAddModal] = useState(false);
+      
+      const fileInputRef = useRef(null); // Excel匯入用
 
       const filteredRecords = useMemo(() => {
         return records
@@ -417,6 +418,72 @@
           .filter(r => filterOffice ? r.office === filterOffice : true)
           .sort((a, b) => b.timestamp - a.timestamp);
       }, [records, filterDate, filterOffice]);
+
+      // Excel / CSV 匯入邏輯
+      const handleImportExcel = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async (evt) => {
+          try {
+            const data = new Uint8Array(evt.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const firstSheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[firstSheetName];
+            const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+            if (jsonData.length === 0) {
+              alert("檔案中沒有資料！"); return;
+            }
+
+            const importedRecords = [];
+            jsonData.forEach(row => {
+              const classId = String(row['班級'] || row['班級編號'] || '').trim();
+              if (!classId) return; // 略過無班級資料列
+
+              let dateStr = row['日期'];
+              // 處理 Excel 日期轉數字的問題
+              if (typeof dateStr === 'number') {
+                const excelEpoch = new Date(1899, 11, 30);
+                dateStr = new Date(excelEpoch.getTime() + dateStr * 86400000).toISOString().split('T')[0];
+              } else if (!dateStr) {
+                dateStr = new Date().toISOString().split('T')[0];
+              }
+
+              importedRecords.push({
+                id: crypto.randomUUID(),
+                date: dateStr,
+                period: String(row['節次'] || '其他'),
+                office: String(row['處室'] || ''),
+                title: String(row['職稱'] || ''),
+                name: String(row['姓名'] || '匯入資料'),
+                classId: classId,
+                teacher: String(row['任課老師'] || ''),
+                violationCode: String(row['代號'] || row['違規代號'] || '✓'),
+                remark: String(row['備註'] || row['狀況描述'] || ''),
+                photo: null,
+                timestamp: Date.now()
+              });
+            });
+
+            if (importedRecords.length > 0) {
+              if (window.confirm(`成功讀取 ${importedRecords.length} 筆紀錄，確定要整批匯入雲端嗎？\n(圖表與列表將自動更新)`)) {
+                await addRecords(importedRecords);
+                showToast(`成功匯入 ${importedRecords.length} 筆資料！`);
+              }
+            } else {
+              alert("找不到可匯入的資料，請確認 Excel 標題列是否包含「班級」");
+            }
+          } catch (error) {
+            console.error(error);
+            alert("匯入失敗，請確認檔案格式是否正確。");
+          }
+          // 清空 input 以便可重複匯入同一個檔
+          if(fileInputRef.current) fileInputRef.current.value = '';
+        };
+        reader.readAsArrayBuffer(file);
+      };
 
       const handleExportWord = () => {
         if (filteredRecords.length === 0) { alert("無紀錄可匯出"); return; }
@@ -456,12 +523,8 @@
         todayViolations: records.filter(r => r.date === new Date().toISOString().split('T')[0] && r.violationCode !== '✓').length
       };
 
-      // 準備圖表資料
       const chartData = useMemo(() => {
-        const vCounts = {};
-        const pCounts = {};
-        const oCounts = {};
-        
+        const vCounts = {}, pCounts = {}, oCounts = {};
         filteredRecords.forEach(r => {
           oCounts[r.office] = (oCounts[r.office] || 0) + 1;
           if (r.violationCode !== '✓') {
@@ -472,70 +535,40 @@
         });
 
         return {
-          violations: {
-            labels: Object.keys(vCounts),
-            datasets: [{ data: Object.values(vCounts), backgroundColor: ['#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16', '#22c55e', '#06b6d4'] }]
-          },
-          periods: {
-            labels: PERIODS.filter(p => p !== '其他' && p !== '午休'),
-            datasets: [{ label: '違規次數', data: PERIODS.filter(p => p !== '其他' && p !== '午休').map(p => pCounts[p] || 0), backgroundColor: '#3b82f6', borderRadius: 4 }]
-          },
-          offices: {
-            labels: OFFICES,
-            datasets: [{ label: '巡堂班次', data: OFFICES.map(o => oCounts[o] || 0), backgroundColor: '#8b5cf6', borderRadius: 4 }]
-          }
+          violations: { labels: Object.keys(vCounts), datasets: [{ data: Object.values(vCounts), backgroundColor: ['#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16', '#22c55e', '#06b6d4'] }] },
+          periods: { labels: PERIODS.filter(p => p !== '其他' && p !== '午休'), datasets: [{ label: '違規次數', data: PERIODS.filter(p => p !== '其他' && p !== '午休').map(p => pCounts[p] || 0), backgroundColor: '#3b82f6', borderRadius: 4 }] },
+          offices: { labels: OFFICES, datasets: [{ label: '巡堂班次', data: OFFICES.map(o => oCounts[o] || 0), backgroundColor: '#8b5cf6', borderRadius: 4 }] }
         };
       }, [filteredRecords]);
 
       return (
         <div className="space-y-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-white p-4 rounded-xl shadow border text-center">
-              <div className="text-gray-500 text-sm mb-1">系統總班次</div><div className="text-3xl font-bold text-blue-600">{stats.total}</div>
-            </div>
-            <div className="bg-white p-4 rounded-xl shadow border text-center">
-              <div className="text-gray-500 text-sm mb-1">系統違規班次</div><div className="text-3xl font-bold text-red-500">{stats.violations}</div>
-            </div>
-            <div className="bg-white p-4 rounded-xl shadow border text-center">
-              <div className="text-gray-500 text-sm mb-1">今日巡堂班次</div><div className="text-3xl font-bold text-green-600">{stats.todayTotal}</div>
-            </div>
-            <div className="bg-white p-4 rounded-xl shadow border text-center">
-              <div className="text-gray-500 text-sm mb-1">今日違規班次</div><div className="text-3xl font-bold text-orange-500">{stats.todayViolations}</div>
-            </div>
+            <div className="bg-white p-4 rounded-xl shadow border text-center"><div className="text-gray-500 text-sm mb-1">系統總班次</div><div className="text-3xl font-bold text-blue-600">{stats.total}</div></div>
+            <div className="bg-white p-4 rounded-xl shadow border text-center"><div className="text-gray-500 text-sm mb-1">系統違規班次</div><div className="text-3xl font-bold text-red-500">{stats.violations}</div></div>
+            <div className="bg-white p-4 rounded-xl shadow border text-center"><div className="text-gray-500 text-sm mb-1">今日巡堂班次</div><div className="text-3xl font-bold text-green-600">{stats.todayTotal}</div></div>
+            <div className="bg-white p-4 rounded-xl shadow border text-center"><div className="text-gray-500 text-sm mb-1">今日違規班次</div><div className="text-3xl font-bold text-orange-500">{stats.todayViolations}</div></div>
           </div>
 
-          {/* 視覺化圖表區 */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div className="bg-white p-4 rounded-xl shadow border">
-              <h3 className="text-gray-700 font-bold mb-2 text-center">各類違規佔比</h3>
-              {chartData.violations.labels.length > 0 ? (
-                <DashboardChart type="doughnut" data={chartData.violations} options={{ plugins: { legend: { position: 'bottom' } } }} />
-              ) : (
-                <div className="h-64 flex items-center justify-center text-gray-400">無違規數據</div>
-              )}
-            </div>
-            <div className="bg-white p-4 rounded-xl shadow border">
-              <h3 className="text-gray-700 font-bold mb-2 text-center">各節次違規熱區</h3>
-              <DashboardChart type="bar" data={chartData.periods} options={{ plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }} />
-            </div>
-            <div className="bg-white p-4 rounded-xl shadow border">
-              <h3 className="text-gray-700 font-bold mb-2 text-center">各處室巡堂動能</h3>
-              <DashboardChart type="bar" data={chartData.offices} options={{ indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, ticks: { stepSize: 1 } } } }} />
-            </div>
+            <div className="bg-white p-4 rounded-xl shadow border"><h3 className="text-gray-700 font-bold mb-2 text-center">各類違規佔比</h3>{chartData.violations.labels.length > 0 ? <DashboardChart type="doughnut" data={chartData.violations} options={{ plugins: { legend: { position: 'bottom' } } }} /> : <div className="h-64 flex items-center justify-center text-gray-400">無違規數據</div>}</div>
+            <div className="bg-white p-4 rounded-xl shadow border"><h3 className="text-gray-700 font-bold mb-2 text-center">各節次違規熱區</h3><DashboardChart type="bar" data={chartData.periods} options={{ plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }} /></div>
+            <div className="bg-white p-4 rounded-xl shadow border"><h3 className="text-gray-700 font-bold mb-2 text-center">各處室巡堂動能</h3><DashboardChart type="bar" data={chartData.offices} options={{ indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, ticks: { stepSize: 1 } } } }} /></div>
           </div>
 
-          <div className="bg-white p-4 rounded-xl shadow border flex flex-col md:flex-row justify-between items-center gap-4">
+          <div className="bg-white p-4 rounded-xl shadow border flex flex-col lg:flex-row justify-between items-center gap-4">
             <div className="flex items-center gap-3">
               <span className="bg-gray-100 p-2 rounded-md emoji-icon">🔍</span>
               <input type="date" className="border rounded p-2 text-sm" value={filterDate} onChange={e => setFilterDate(e.target.value)} />
-              <select className="border rounded p-2 text-sm" value={filterOffice} onChange={e => setFilterOffice(e.target.value)}>
-                <option value="">所有處室</option>{OFFICES.map(o => <option key={o} value={o}>{o}</option>)}
-              </select>
+              <select className="border rounded p-2 text-sm" value={filterOffice} onChange={e => setFilterOffice(e.target.value)}><option value="">所有處室</option>{OFFICES.map(o => <option key={o}>{o}</option>)}</select>
             </div>
-            <div className="flex space-x-2">
-              <button onClick={() => setShowAddModal(true)} className="bg-blue-100 text-blue-700 px-4 py-2 rounded font-medium"><span className="emoji-icon">➕</span> 補充</button>
-              <button onClick={handleExportWord} className="bg-blue-600 text-white px-4 py-2 rounded font-medium"><span className="emoji-icon">🖨️</span> Word檔</button>
-              <button onClick={handleExportCSV} className="bg-green-600 text-white px-4 py-2 rounded font-medium"><span className="emoji-icon">📥</span> CSV</button>
+            
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <input type="file" ref={fileInputRef} onChange={handleImportExcel} accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" className="hidden" />
+              <button onClick={() => fileInputRef.current.click()} className="bg-amber-500 text-white px-3 py-2 rounded text-sm font-medium"><span className="emoji-icon mr-1">📂</span> 匯入 Excel</button>
+              <button onClick={() => setShowAddModal(true)} className="bg-blue-100 text-blue-700 px-3 py-2 rounded text-sm font-medium"><span className="emoji-icon mr-1">➕</span> 補充</button>
+              <button onClick={handleExportWord} className="bg-blue-600 text-white px-3 py-2 rounded text-sm font-medium"><span className="emoji-icon mr-1">🖨️</span> Word檔</button>
+              <button onClick={handleExportCSV} className="bg-green-600 text-white px-3 py-2 rounded text-sm font-medium"><span className="emoji-icon mr-1">📥</span> CSV</button>
             </div>
           </div>
 
@@ -575,9 +608,6 @@
       );
     }
 
-    // ==========================================
-    // 編輯與補充 Modal 共用元件
-    // ==========================================
     function EditModal({ record, isAdd, defaultDate, onClose, onSave }) {
       const [formData, setFormData] = useState(record || { date: defaultDate || new Date().toISOString().split('T')[0], period: '第1節', office: '', title: '', name: '', classId: '', teacher: '', violationCode: '✓', remark: '', photo: null });
       const handleChange = (e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
