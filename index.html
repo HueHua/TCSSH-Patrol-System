@@ -115,13 +115,17 @@
         if (!user) return;
         const recordsRef = db.collection('artifacts').doc(APP_ID).collection('public').doc('data').collection('patrolRecords');
         
-        // 使用 Batch 批次寫入提升效能
-        const batch = db.batch();
-        newRecords.forEach(r => {
-          const docRef = recordsRef.doc(r.id);
-          batch.set(docRef, r);
-        });
-        await batch.commit();
+        // 使用分批次寫入 (Firestore 限制每個 batch 最多 500 筆，超過需切割)
+        const chunkSize = 450;
+        for (let i = 0; i < newRecords.length; i += chunkSize) {
+          const chunk = newRecords.slice(i, i + chunkSize);
+          const batch = db.batch();
+          chunk.forEach(r => {
+            const docRef = recordsRef.doc(r.id);
+            batch.set(docRef, r);
+          });
+          await batch.commit();
+        }
       };
 
       const updateRecordToDB = async (recordData) => {
@@ -438,38 +442,54 @@
             }
 
             const importedRecords = [];
-            jsonData.forEach(row => {
+            jsonData.forEach(rawRow => {
+              // 修復問題：自動將標題列欄位名稱多餘的空白去除，避免配對失敗
+              const row = {};
+              Object.keys(rawRow).forEach(k => { row[k.trim()] = rawRow[k]; });
+
               const classId = String(row['班級'] || row['班級編號'] || '').trim();
               if (!classId) return; // 略過無班級資料列
 
               let dateStr = row['日期'];
-              // 處理 Excel 日期轉數字的問題
+              // 處理 Excel 日期格式問題 (將斜線轉成橫槓，補齊YYYY-MM-DD格式)
               if (typeof dateStr === 'number') {
                 const excelEpoch = new Date(1899, 11, 30);
                 dateStr = new Date(excelEpoch.getTime() + dateStr * 86400000).toISOString().split('T')[0];
-              } else if (!dateStr) {
+              } else if (typeof dateStr === 'string') {
+                dateStr = dateStr.replace(/\//g, '-');
+                const parts = dateStr.split('-');
+                if(parts.length === 3) {
+                   const y = parts[0].length === 2 ? '20'+parts[0] : parts[0];
+                   const m = parts[1].padStart(2, '0');
+                   const d = parts[2].padStart(2, '0');
+                   dateStr = `${y}-${m}-${d}`;
+                }
+              } else {
                 dateStr = new Date().toISOString().split('T')[0];
               }
 
               importedRecords.push({
                 id: crypto.randomUUID(),
                 date: dateStr,
-                period: String(row['節次'] || '其他'),
-                office: String(row['處室'] || ''),
-                title: String(row['職稱'] || ''),
-                name: String(row['姓名'] || '匯入資料'),
+                period: String(row['節次'] || '其他').trim(),
+                office: String(row['處室'] || '').trim(),
+                title: String(row['職稱'] || '').trim(),
+                name: String(row['姓名'] || '匯入資料').trim(),
                 classId: classId,
-                teacher: String(row['任課老師'] || ''),
-                violationCode: String(row['代號'] || row['違規代號'] || '✓'),
-                remark: String(row['備註'] || row['狀況描述'] || ''),
+                teacher: String(row['任課老師'] || '').trim(),
+                violationCode: String(row['代號'] || row['違規代號'] || '✓').trim(),
+                remark: String(row['備註'] || row['狀況描述'] || '').trim(),
                 photo: null,
                 timestamp: Date.now()
               });
             });
 
             if (importedRecords.length > 0) {
-              if (window.confirm(`成功讀取 ${importedRecords.length} 筆紀錄，確定要整批匯入雲端嗎？\n(圖表與列表將自動更新)`)) {
+              if (window.confirm(`成功讀取 ${importedRecords.length} 筆紀錄，確定要整批匯入雲端嗎？\n(匯入後將自動清除篩選以顯示資料)`)) {
                 await addRecords(importedRecords);
+                // 【關鍵修復】匯入完成後自動清除篩選條件，讓所有資料立刻顯示出來
+                setFilterDate('');
+                setFilterOffice('');
                 showToast(`成功匯入 ${importedRecords.length} 筆資料！`);
               }
             } else {
