@@ -70,6 +70,7 @@
       { code: 'E', desc: '室外課教室門窗未關', isNormal: false },
       { code: 'F', desc: '室外課教室電源未關', isNormal: false },
       { code: 'G', desc: '老師無故未到(須填說明)', isNormal: false },
+      { code: 'H', desc: '學生異常滯留/未到課(須填說明)', isNormal: false }, // 新增代號
     ];
 
     function App() {
@@ -98,7 +99,14 @@
         const unsubscribeDB = recordsRef.onSnapshot((snapshot) => {
           const data = [];
           snapshot.forEach(doc => {
-            data.push({ id: doc.id, ...doc.data() });
+            const docData = doc.data();
+            // 相容舊版單一字串的資料格式
+            if (!docData.violationCodes && docData.violationCode) {
+               docData.violationCodes = [docData.violationCode];
+            } else if (!docData.violationCodes) {
+               docData.violationCodes = ['✓'];
+            }
+            data.push({ id: doc.id, ...docData });
           });
           setRecords(data);
           setIsSyncing(false);
@@ -115,7 +123,6 @@
         if (!user) return;
         const recordsRef = db.collection('artifacts').doc(APP_ID).collection('public').doc('data').collection('patrolRecords');
         
-        // 使用分批次寫入 (Firestore 限制每個 batch 最多 500 筆，超過需切割)
         const chunkSize = 450;
         for (let i = 0; i < newRecords.length; i += chunkSize) {
           const chunk = newRecords.slice(i, i + chunkSize);
@@ -142,7 +149,6 @@
 
       return (
         <div className="min-h-screen">
-          {/* 導覽列 */}
           <nav className="bg-blue-800 text-white shadow-md sticky top-0 z-40">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <div className="flex justify-between h-16">
@@ -151,8 +157,7 @@
                   <span className="font-bold text-lg tracking-wider">臺中二中 巡堂系統</span>
                   {user && (
                     <span className="hidden md:flex items-center text-xs text-blue-200 bg-blue-900 px-2 py-1 rounded-full ml-2">
-                      <span className="mr-1 emoji-icon">☁️</span>
-                      {isSyncing ? '同步中...' : '已連線'}
+                      <span className="mr-1 emoji-icon">☁️</span>{isSyncing ? '同步中...' : '已連線'}
                     </span>
                   )}
                 </div>
@@ -168,14 +173,12 @@
             </div>
           </nav>
 
-          {/* 提示訊息 */}
           {toast && (
             <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 bg-gray-800 text-white px-4 py-2 rounded-full shadow-lg flex items-center text-sm">
               <span className="mr-2 emoji-icon">✅</span> {toast}
             </div>
           )}
 
-          {/* 主要內容區 */}
           <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
             {currentView === 'frontend' ? (
               <FrontendView addRecords={addRecordsToDB} showToast={showToast} isSyncing={isSyncing} />
@@ -193,7 +196,8 @@
     function FrontendView({ addRecords, showToast, isSyncing }) {
       const todayStr = new Date().toISOString().split('T')[0];
       const [basicInfo, setBasicInfo] = useState({ office: '', title: '', name: '', date: todayStr, period: '第1節', customPeriod: '' });
-      const getEmptyRow = () => ({ id: crypto.randomUUID(), classId: '', teacher: '', violationCode: '✓', remark: '', photo: null });
+      // 將預設代號改為陣列格式
+      const getEmptyRow = () => ({ id: crypto.randomUUID(), classId: '', teacher: '', violationCodes: ['✓'], remark: '', photo: null });
       const [draftRows, setDraftRows] = useState([getEmptyRow()]);
       const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -236,6 +240,26 @@
         else setDraftRows(prev => prev.filter(row => row.id !== id));
       };
 
+      // 處理複選按鈕邏輯
+      const toggleViolation = (rowId, code) => {
+        setDraftRows(prev => prev.map(row => {
+          if (row.id !== rowId) return row;
+          let newCodes = [...(row.violationCodes || [])];
+          if (code === '✓') {
+            newCodes = ['✓'];
+          } else {
+            newCodes = newCodes.filter(c => c !== '✓'); // 移除正常
+            if (newCodes.includes(code)) {
+              newCodes = newCodes.filter(c => c !== code); // 取消選取
+              if (newCodes.length === 0) newCodes = ['✓']; // 全空則自動恢復正常
+            } else {
+              newCodes.push(code); // 新增選取
+            }
+          }
+          return { ...row, violationCodes: newCodes };
+        }));
+      };
+
       const submitRecords = async (rowsToSubmit) => {
         if (!basicInfo.office || !basicInfo.title || !basicInfo.name || !basicInfo.date) {
           alert("請先填寫完整「基本資料」（處室、職稱、姓名、日期）"); return;
@@ -251,11 +275,14 @@
 
         rowsToSubmit.forEach(row => {
           if (!row.classId.trim()) return;
-          if (['B', 'G'].includes(row.violationCode) && !row.remark.trim()) {
-            alert(`班級 ${row.classId} 選擇了違規代號 ${row.violationCode}，請務必填寫備註說明！`);
+          // 檢查需要備註的代號 B, G, H
+          if (row.violationCodes.some(c => ['B', 'G', 'H'].includes(c)) && !row.remark.trim()) {
+            alert(`班級 ${row.classId} 選擇了須填寫備註的代號，請務必填寫備註說明！`);
             invalidRows.push(row);
           } else {
-            validRows.push({ ...row, ...basicInfo, period: basicInfo.period === '其他' ? basicInfo.customPeriod : basicInfo.period, timestamp: Date.now() });
+            // 自動產生向下相容的字串 (給舊版程式讀取用)
+            const fallbackCode = row.violationCodes.includes('✓') ? '✓' : row.violationCodes.join(',');
+            validRows.push({ ...row, ...basicInfo, violationCode: fallbackCode, period: basicInfo.period === '其他' ? basicInfo.customPeriod : basicInfo.period, timestamp: Date.now() });
           }
         });
 
@@ -329,8 +356,8 @@
             </div>
 
             <div className="bg-yellow-50 text-yellow-800 p-3 rounded-lg text-xs sm:text-sm mb-4 border border-yellow-200">
-              <div className="font-bold mb-1">💡 違規代號說明：</div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-1">
+              <div className="font-bold mb-1">💡 違規代號說明(可複選)：</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-1">
                 {VIOLATIONS.map(v => (
                   <div key={v.code} className="truncate">
                     <span className={`font-bold mr-1 ${v.isNormal ? 'text-green-600' : 'text-red-600'}`}>[{v.code}]</span> {v.desc}
@@ -340,7 +367,9 @@
             </div>
 
             <div className="space-y-4">
-              {draftRows.map(row => (
+              {draftRows.map(row => {
+                const requiresRemark = row.violationCodes.some(c => ['B', 'G', 'H'].includes(c));
+                return (
                 <div key={row.id} className="relative bg-gray-50 border border-gray-200 rounded-lg p-4 pt-8 sm:pt-4">
                   <button onClick={() => removeRow(row.id)} className="absolute top-2 right-2 text-gray-400 hover:text-red-500 bg-white rounded-full p-1 shadow-sm" title="刪除此列"><span className="emoji-icon">❌</span></button>
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-start">
@@ -352,13 +381,28 @@
                       <label className="block text-xs font-medium text-gray-500 mb-1 md:hidden">老師(選填)</label>
                       <input type="text" placeholder="老師" className="w-full border-gray-300 rounded-md p-2 border" value={row.teacher} onChange={e => updateDraftRow(row.id, 'teacher', e.target.value)} />
                     </div>
+                    
+                    {/* 狀況改為複選按鈕區 */}
                     <div className="md:col-span-3">
-                      <select className={`w-full border-gray-300 rounded-md p-2 border ${row.violationCode === '✓' ? 'text-green-700 bg-green-50' : 'text-red-700 bg-red-50'}`} value={row.violationCode} onChange={e => updateDraftRow(row.id, 'violationCode', e.target.value)}>
-                        {VIOLATIONS.map(v => <option key={v.code} value={v.code}>{v.code} - {v.desc}</option>)}
-                      </select>
+                      <label className="block text-xs font-medium text-gray-500 mb-1 md:hidden">狀況代號(可點擊複選)</label>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {VIOLATIONS.map(v => {
+                          const isSelected = row.violationCodes.includes(v.code);
+                          return (
+                            <button
+                              key={v.code} type="button" onClick={() => toggleViolation(row.id, v.code)} title={v.desc}
+                              className={`px-2 py-1 text-xs font-bold rounded shadow-sm border transition-colors ${isSelected ? (v.isNormal ? 'bg-green-600 text-white border-green-700' : 'bg-red-500 text-white border-red-600') : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'}`}
+                            >
+                              {v.code}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
+
                     <div className="md:col-span-3">
-                      <input type="text" placeholder={['B', 'G'].includes(row.violationCode) ? "必填說明" : "備註"} className="w-full border-gray-300 rounded-md p-2 border" value={row.remark} onChange={e => updateDraftRow(row.id, 'remark', e.target.value)} />
+                      <label className="block text-xs font-medium text-gray-500 mb-1 md:hidden">備註</label>
+                      <input type="text" placeholder={requiresRemark ? "必填！說明人數或狀況" : "備註"} className={`w-full border-gray-300 rounded-md p-2 border ${requiresRemark && !row.remark ? 'border-red-400 bg-red-50' : ''}`} value={row.remark} onChange={e => updateDraftRow(row.id, 'remark', e.target.value)} />
                     </div>
                     <div className="md:col-span-1 flex justify-center">
                       <label className="cursor-pointer text-gray-500 flex flex-col items-center">
@@ -374,7 +418,7 @@
                     </div>
                   </div>
                 </div>
-              ))}
+              )})}
             </div>
 
             <div className="mt-6 pt-4 border-t flex justify-end">
@@ -414,7 +458,7 @@
       const [editingRecord, setEditingRecord] = useState(null);
       const [showAddModal, setShowAddModal] = useState(false);
       
-      const fileInputRef = useRef(null); // Excel匯入用
+      const fileInputRef = useRef(null); 
 
       const filteredRecords = useMemo(() => {
         return records
@@ -423,7 +467,26 @@
           .sort((a, b) => b.timestamp - a.timestamp);
       }, [records, filterDate, filterOffice]);
 
-      // Excel / CSV 匯入邏輯
+      // Email 通知任課老師功能
+      const handleEmailTeacher = (r) => {
+        const codes = r.violationCodes || ['✓'];
+        const descText = codes.map(c => {
+          const vInfo = VIOLATIONS.find(v => v.code === c);
+          return vInfo ? `[${c}] ${vInfo.desc}` : c;
+        }).join('\n');
+
+        const subject = encodeURIComponent(`[巡堂通知] 班級 ${r.classId} 異常狀況提醒`);
+        const body = encodeURIComponent(
+          `老師您好：\n\n今日（${r.date}）第${r.period}巡堂時，發現班上（${r.classId}）有異常狀況。\n\n` +
+          `【狀況紀錄】\n${descText}\n\n` +
+          `【備註說明】\n${r.remark || '無'}\n\n` +
+          `請老師協助留意學生出席及班級狀況，謝謝！\n\n` +
+          `巡堂人員：${r.name} (${r.office})`
+        );
+        // 使用 mailto: 呼叫使用者的 Email 軟體
+        window.location.href = `mailto:?subject=${subject}&body=${body}`;
+      };
+
       const handleImportExcel = (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -437,21 +500,17 @@
             const worksheet = workbook.Sheets[firstSheetName];
             const jsonData = XLSX.utils.sheet_to_json(worksheet);
 
-            if (jsonData.length === 0) {
-              alert("檔案中沒有資料！"); return;
-            }
+            if (jsonData.length === 0) { alert("檔案中沒有資料！"); return; }
 
             const importedRecords = [];
             jsonData.forEach(rawRow => {
-              // 修復問題：自動將標題列欄位名稱多餘的空白去除，避免配對失敗
               const row = {};
               Object.keys(rawRow).forEach(k => { row[k.trim()] = rawRow[k]; });
 
               const classId = String(row['班級'] || row['班級編號'] || '').trim();
-              if (!classId) return; // 略過無班級資料列
+              if (!classId) return;
 
               let dateStr = row['日期'];
-              // 處理 Excel 日期格式問題 (將斜線轉成橫槓，補齊YYYY-MM-DD格式)
               if (typeof dateStr === 'number') {
                 const excelEpoch = new Date(1899, 11, 30);
                 dateStr = new Date(excelEpoch.getTime() + dateStr * 86400000).toISOString().split('T')[0];
@@ -468,6 +527,9 @@
                 dateStr = new Date().toISOString().split('T')[0];
               }
 
+              const rawCodesStr = String(row['代號'] || row['違規代號'] || '✓').trim();
+              const parsedCodes = rawCodesStr.split(/[,、]/).map(c => c.trim()).filter(c => c);
+
               importedRecords.push({
                 id: crypto.randomUUID(),
                 date: dateStr,
@@ -477,7 +539,8 @@
                 name: String(row['姓名'] || '匯入資料').trim(),
                 classId: classId,
                 teacher: String(row['任課老師'] || '').trim(),
-                violationCode: String(row['代號'] || row['違規代號'] || '✓').trim(),
+                violationCodes: parsedCodes.length > 0 ? parsedCodes : ['✓'],
+                violationCode: parsedCodes.includes('✓') ? '✓' : parsedCodes.join(','),
                 remark: String(row['備註'] || row['狀況描述'] || '').trim(),
                 photo: null,
                 timestamp: Date.now()
@@ -487,7 +550,6 @@
             if (importedRecords.length > 0) {
               if (window.confirm(`成功讀取 ${importedRecords.length} 筆紀錄，確定要整批匯入雲端嗎？\n(匯入後將自動清除篩選以顯示資料)`)) {
                 await addRecords(importedRecords);
-                // 【關鍵修復】匯入完成後自動清除篩選條件，讓所有資料立刻顯示出來
                 setFilterDate('');
                 setFilterOffice('');
                 showToast(`成功匯入 ${importedRecords.length} 筆資料！`);
@@ -499,7 +561,6 @@
             console.error(error);
             alert("匯入失敗，請確認檔案格式是否正確。");
           }
-          // 清空 input 以便可重複匯入同一個檔
           if(fileInputRef.current) fileInputRef.current.value = '';
         };
         reader.readAsArrayBuffer(file);
@@ -517,13 +578,18 @@
         const patrolNames = [...new Set(filteredRecords.map(r => r.name))].join('、');
 
         filteredRecords.forEach(r => {
-          tableRows += `<tr><td style="border: 1px solid black; padding: 8px; text-align: center;">${r.classId}</td><td style="border: 1px solid black; padding: 8px; text-align: center;">${r.period}</td><td style="border: 1px solid black; padding: 8px; text-align: center;">${r.teacher || ''}</td><td style="border: 1px solid black; padding: 8px; text-align: center;">${r.violationCode === '✓' ? '正常' : r.violationCode}</td><td style="border: 1px solid black; padding: 8px; text-align: left;">${r.remark || ''}</td></tr>`;
+          const codes = r.violationCodes || ['✓'];
+          const isNormal = codes.includes('✓');
+          const vText = isNormal ? '正常' : codes.join(', ');
+          
+          tableRows += `<tr><td style="border: 1px solid black; padding: 8px; text-align: center;">${r.classId}</td><td style="border: 1px solid black; padding: 8px; text-align: center;">${r.period}</td><td style="border: 1px solid black; padding: 8px; text-align: center;">${r.teacher || ''}</td><td style="border: 1px solid black; padding: 8px; text-align: center; font-weight: ${isNormal?'normal':'bold'}; color: ${isNormal?'black':'red'};">${vText}</td><td style="border: 1px solid black; padding: 8px; text-align: left;">${r.remark || ''}</td></tr>`;
+          
           if (r.photo) {
-            photoDivs += `<div style="margin-bottom: 20px; border: 1px solid #ccc; padding: 10px;"><h4 style="margin-top: 0;">📌 ${r.period} - 班級：${r.classId}</h4><p>狀況：${r.violationCode === '✓' ? '正常' : r.violationCode}</p><p>備註：${r.remark || '無'}</p><img src="${r.photo}" style="max-width: 500px; border: 1px solid #eee;" /></div>`;
+            photoDivs += `<div style="margin-bottom: 20px; border: 1px solid #ccc; padding: 10px;"><h4 style="margin-top: 0;">📌 ${r.period} - 班級：${r.classId}</h4><p>狀況：${vText}</p><p>備註：${r.remark || '無'}</p><img src="${r.photo}" style="max-width: 500px; border: 1px solid #eee;" /></div>`;
           }
         });
 
-        const htmlContent = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset="UTF-8"><style>body { font-family: "標楷體", "DFKai-sb", serif; color: #000; line-height: 1.5; } table { width: 100%; border-collapse: collapse; margin-bottom: 20px; } h1 { text-align: center; font-size: 24px; letter-spacing: 2px; } .legend { font-size: 14px; border: 1px solid #000; padding: 10px; margin-bottom: 20px; }</style></head><body><h1>臺中市立臺中第二高級中學巡堂紀錄表</h1><div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 16px;"><span>日期： <u> &nbsp;${year}&nbsp; </u> 年 <u> &nbsp;${month}&nbsp; </u> 月 <u> &nbsp;${day}&nbsp; </u> 日 星期 <u> &nbsp;${weekDayStr}&nbsp; </u></span><span style="float: right;">巡堂人員： <u> &nbsp;${patrolNames || '_______________'}&nbsp; </u></span></div><table style="border: 1px solid black;"><thead><tr><th style="border: 1px solid black; padding: 8px; width: 12%; background-color: #f2f2f2;">班別</th><th style="border: 1px solid black; padding: 8px; width: 12%; background-color: #f2f2f2;">節次</th><th style="border: 1px solid black; padding: 8px; width: 15%; background-color: #f2f2f2;">任課老師</th><th style="border: 1px solid black; padding: 8px; width: 15%; background-color: #f2f2f2;">紀錄</th><th style="border: 1px solid black; padding: 8px; width: 46%; background-color: #f2f2f2;">違規及待改進事項</th></tr></thead><tbody>${tableRows || '<tr><td colspan="5" style="border: 1px solid black; text-align: center; padding: 10px;">無紀錄</td></tr>'}</tbody></table><div class="legend"><strong>紀錄代號：</strong><br>A. 嬉鬧吵雜,課堂管理欠佳<br>B. 睡覺人數較多(請註記:大概人數*n)<br>C. 不當使用手機或3C產品(請學生到走廊登記學號)<br>D. 教室或走廊髒亂<br>E. 室外課教室 門窗未關閉 &nbsp;&nbsp;&nbsp;&nbsp; F. 室外課教室 電源未關閉<br>G. 老師無故未到</div><table style="width: 100%; margin-top: 40px; border: none;"><tr><td style="border: none; text-align: left; vertical-align: bottom; height: 80px;">巡堂：<br><br><br>_________________</td><td style="border: none; text-align: left; vertical-align: bottom;">會簽：<br><br><br>學務處：___________  <br>其他：_____________</td><td style="border: none; text-align: left; vertical-align: bottom;">教學組長：<br><br><br>_________________</td><td style="border: none; text-align: left; vertical-align: bottom;">教務主任：<br><br><br>_________________</td><td style="border: none; text-align: left; vertical-align: bottom;">校長：<br><br><br>_________________</td></tr></table>${photoDivs ? `<br clear=all style='mso-special-character:line-break;page-break-before:always'><h2 style="text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px;">附件：巡堂照片紀錄</h2>${photoDivs}` : ''}</body></html>`;
+        const htmlContent = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset="UTF-8"><style>body { font-family: "標楷體", "DFKai-sb", serif; color: #000; line-height: 1.5; } table { width: 100%; border-collapse: collapse; margin-bottom: 20px; } h1 { text-align: center; font-size: 24px; letter-spacing: 2px; } .legend { font-size: 14px; border: 1px solid #000; padding: 10px; margin-bottom: 20px; }</style></head><body><h1>臺中市立臺中第二高級中學巡堂紀錄表</h1><div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 16px;"><span>日期： <u> &nbsp;${year}&nbsp; </u> 年 <u> &nbsp;${month}&nbsp; </u> 月 <u> &nbsp;${day}&nbsp; </u> 日 星期 <u> &nbsp;${weekDayStr}&nbsp; </u></span><span style="float: right;">巡堂人員： <u> &nbsp;${patrolNames || '_______________'}&nbsp; </u></span></div><table style="border: 1px solid black;"><thead><tr><th style="border: 1px solid black; padding: 8px; width: 12%; background-color: #f2f2f2;">班別</th><th style="border: 1px solid black; padding: 8px; width: 12%; background-color: #f2f2f2;">節次</th><th style="border: 1px solid black; padding: 8px; width: 15%; background-color: #f2f2f2;">任課老師</th><th style="border: 1px solid black; padding: 8px; width: 15%; background-color: #f2f2f2;">紀錄</th><th style="border: 1px solid black; padding: 8px; width: 46%; background-color: #f2f2f2;">違規及待改進事項</th></tr></thead><tbody>${tableRows || '<tr><td colspan="5" style="border: 1px solid black; text-align: center; padding: 10px;">無紀錄</td></tr>'}</tbody></table><div class="legend"><strong>紀錄代號：</strong><br>A. 嬉鬧吵雜,課堂管理欠佳<br>B. 睡覺人數較多(請註記:大概人數*n)<br>C. 不當使用手機或3C產品(請學生到走廊登記學號)<br>D. 教室或走廊髒亂<br>E. 室外課教室 門窗未關閉 &nbsp;&nbsp;&nbsp;&nbsp; F. 室外課教室 電源未關閉<br>G. 老師無故未到 &nbsp;&nbsp;&nbsp;&nbsp; H. 學生異常滯留/未到課</div><table style="width: 100%; margin-top: 40px; border: none;"><tr><td style="border: none; text-align: left; vertical-align: bottom; height: 80px;">巡堂：<br><br><br>_________________</td><td style="border: none; text-align: left; vertical-align: bottom;">會簽：<br><br><br>學務處：___________  <br>其他：_____________</td><td style="border: none; text-align: left; vertical-align: bottom;">教學組長：<br><br><br>_________________</td><td style="border: none; text-align: left; vertical-align: bottom;">教務主任：<br><br><br>_________________</td><td style="border: none; text-align: left; vertical-align: bottom;">校長：<br><br><br>_________________</td></tr></table>${photoDivs ? `<br clear=all style='mso-special-character:line-break;page-break-before:always'><h2 style="text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px;">附件：巡堂照片紀錄</h2>${photoDivs}` : ''}</body></html>`;
 
         const blob = new Blob(['\ufeff', htmlContent], { type: 'application/msword;charset=utf-8;' });
         const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `巡堂紀錄表_${filterDate}.doc`; link.click();
@@ -532,25 +598,33 @@
       const handleExportCSV = () => {
         if (records.length === 0) { alert("無紀錄可匯出"); return; }
         const headers = ['日期', '節次', '處室', '職稱', '姓名', '班級', '任課老師', '代號', '備註', '時間戳記'];
-        const rows = records.map(r => [r.date, r.period, r.office, r.title, r.name, r.classId, r.teacher || '', r.violationCode, r.remark || '', new Date(r.timestamp).toLocaleString()].map(f => `"${String(f).replace(/"/g, '""')}"`).join(','));
+        const rows = records.map(r => {
+          const vText = (r.violationCodes || ['✓']).join(',');
+          return [r.date, r.period, r.office, r.title, r.name, r.classId, r.teacher || '', vText, r.remark || '', new Date(r.timestamp).toLocaleString()].map(f => `"${String(f).replace(/"/g, '""')}"`).join(',');
+        });
         const blob = new Blob(["\uFEFF" + headers.join(',') + '\n' + rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `巡堂紀錄_${filterDate}.csv`; link.click();
       };
 
       const stats = {
-        total: records.length, violations: records.filter(r => r.violationCode !== '✓').length,
+        total: records.length, 
+        violations: records.filter(r => !(r.violationCodes||['✓']).includes('✓')).length,
         todayTotal: records.filter(r => r.date === new Date().toISOString().split('T')[0]).length,
-        todayViolations: records.filter(r => r.date === new Date().toISOString().split('T')[0] && r.violationCode !== '✓').length
+        todayViolations: records.filter(r => r.date === new Date().toISOString().split('T')[0] && !(r.violationCodes||['✓']).includes('✓')).length
       };
 
       const chartData = useMemo(() => {
         const vCounts = {}, pCounts = {}, oCounts = {};
         filteredRecords.forEach(r => {
           oCounts[r.office] = (oCounts[r.office] || 0) + 1;
-          if (r.violationCode !== '✓') {
-            const vLabel = `${r.violationCode}-${VIOLATIONS.find(v => v.code === r.violationCode)?.desc.substring(0,4)}...`;
-            vCounts[vLabel] = (vCounts[vLabel] || 0) + 1;
+          const codes = r.violationCodes || ['✓'];
+          if (!codes.includes('✓')) {
             pCounts[r.period] = (pCounts[r.period] || 0) + 1;
+            codes.forEach(c => {
+               const vDef = VIOLATIONS.find(v => v.code === c);
+               const vLabel = vDef ? `${c}-${vDef.desc.substring(0,4)}...` : c;
+               vCounts[vLabel] = (vCounts[vLabel] || 0) + 1;
+            });
           }
         });
 
@@ -599,28 +673,36 @@
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {filteredRecords.length === 0 ? <tr><td colSpan="6" className="text-center p-10 text-gray-500"><div className="text-4xl emoji-icon">📄</div>無紀錄</td></tr> : 
-                  filteredRecords.map(r => (
+                  filteredRecords.map(r => {
+                    const isNormal = (r.violationCodes||['✓']).includes('✓');
+                    return (
                     <tr key={r.id}>
                       <td className="px-4 py-3 text-sm">{r.date}<br/><span className="text-gray-500 text-xs">{r.period}</span></td>
                       <td className="px-4 py-3 text-sm">{r.name}<br/><span className="text-gray-500 text-xs">{r.office}</span></td>
                       <td className="px-4 py-3 text-sm font-bold text-blue-700">{r.classId}<br/><span className="text-gray-500 text-xs font-normal">{r.teacher || '-'}</span></td>
-                      <td className="px-4 py-3 text-sm"><span className={`px-2 py-1 rounded-full text-xs ${r.violationCode === '✓' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{r.violationCode}</span></td>
-                      <td className="px-4 py-3 text-sm">{r.remark || '-'} {r.photo && <img src={r.photo} className="h-8 w-8 mt-1 border cursor-pointer" onClick={() => window.open(r.photo)} />}</td>
-                      <td className="px-4 py-3 text-right">
-                        <button onClick={() => setEditingRecord(r)} className="text-indigo-600 bg-indigo-50 p-2 rounded mr-2 emoji-icon">✏️</button>
-                        <button onClick={() => { if(window.confirm("刪除這筆？")) { deleteRecord(r.id); showToast("已刪除"); } }} className="text-red-600 bg-red-50 p-2 rounded emoji-icon">🗑️</button>
+                      <td className="px-4 py-3 text-sm">
+                        <div className="flex flex-wrap gap-1">
+                          {(r.violationCodes || ['✓']).map(c => <span key={c} className={`px-2 py-0.5 rounded text-xs font-bold ${isNormal ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{c}</span>)}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-sm max-w-[200px] truncate" title={r.remark}>{r.remark || '-'} {r.photo && <img src={r.photo} className="h-8 w-8 mt-1 border cursor-pointer" onClick={() => window.open(r.photo)} />}</td>
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                        <button onClick={() => handleEmailTeacher(r)} className="text-blue-600 bg-blue-50 p-2 rounded mr-1 emoji-icon" title="發送 Email 通知任課老師">✉️</button>
+                        <button onClick={() => setEditingRecord(r)} className="text-indigo-600 bg-indigo-50 p-2 rounded mr-1 emoji-icon" title="編輯">✏️</button>
+                        <button onClick={() => { if(window.confirm("刪除這筆？")) { deleteRecord(r.id); showToast("已刪除"); } }} className="text-red-600 bg-red-50 p-2 rounded emoji-icon" title="刪除">🗑️</button>
                       </td>
                     </tr>
-                  ))
-                }
+                  )})}
               </tbody>
             </table>
           </div>
 
           {(editingRecord || showAddModal) && (
             <EditModal record={editingRecord} isAdd={showAddModal} defaultDate={filterDate} onClose={() => { setEditingRecord(null); setShowAddModal(false); }} onSave={async (data) => {
-              if (showAddModal) { await updateRecord({...data, id: crypto.randomUUID(), timestamp: Date.now()}); showToast("補充完成"); } 
-              else { await updateRecord(data); showToast("更新完成"); }
+              // 相容處理
+              const fallbackCode = data.violationCodes.includes('✓') ? '✓' : data.violationCodes.join(',');
+              if (showAddModal) { await updateRecord({...data, violationCode: fallbackCode, id: crypto.randomUUID(), timestamp: Date.now()}); showToast("補充完成"); } 
+              else { await updateRecord({...data, violationCode: fallbackCode}); showToast("更新完成"); }
               setEditingRecord(null); setShowAddModal(false);
             }} />
           )}
@@ -629,12 +711,33 @@
     }
 
     function EditModal({ record, isAdd, defaultDate, onClose, onSave }) {
-      const [formData, setFormData] = useState(record || { date: defaultDate || new Date().toISOString().split('T')[0], period: '第1節', office: '', title: '', name: '', classId: '', teacher: '', violationCode: '✓', remark: '', photo: null });
+      const [formData, setFormData] = useState(record || { date: defaultDate || new Date().toISOString().split('T')[0], period: '第1節', office: '', title: '', name: '', classId: '', teacher: '', violationCodes: ['✓'], remark: '', photo: null });
       const handleChange = (e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+
+      const toggleModalViolation = (code) => {
+        setFormData(prev => {
+          let newCodes = [...(prev.violationCodes || [])];
+          if (code === '✓') {
+            newCodes = ['✓'];
+          } else {
+            newCodes = newCodes.filter(c => c !== '✓');
+            if (newCodes.includes(code)) {
+              newCodes = newCodes.filter(c => c !== code);
+              if (newCodes.length === 0) newCodes = ['✓'];
+            } else {
+              newCodes.push(code);
+            }
+          }
+          return { ...prev, violationCodes: newCodes };
+        });
+      };
 
       const handleSubmit = async (e) => {
         e.preventDefault();
         if (!formData.classId || !formData.date || !formData.office || !formData.name) return alert("必填欄位缺失");
+        if (formData.violationCodes.some(c => ['B', 'G', 'H'].includes(c)) && !formData.remark.trim()) {
+          return alert("您選擇了需要說明的代號(如B, G, H)，請務必填寫備註");
+        }
         await onSave(formData);
       };
 
@@ -657,10 +760,25 @@
                   <input type="text" name="classId" required placeholder="班級" value={formData.classId} onChange={handleChange} className="border p-2 rounded w-full" />
                   <input type="text" name="teacher" placeholder="老師" value={formData.teacher} onChange={handleChange} className="border p-2 rounded w-full" />
                 </div>
-                <select name="violationCode" required value={formData.violationCode} onChange={handleChange} className="border p-2 rounded w-full">
-                  {VIOLATIONS.map(v => <option key={v.code} value={v.code}>{v.code} - {v.desc}</option>)}
-                </select>
-                <textarea name="remark" value={formData.remark} onChange={handleChange} rows="3" placeholder="備註說明" className="border p-2 rounded w-full"></textarea>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">狀況代號(可複選)</label>
+                  <div className="flex flex-wrap gap-1">
+                    {VIOLATIONS.map(v => {
+                      const isSelected = formData.violationCodes.includes(v.code);
+                      return (
+                        <button
+                          key={v.code} type="button" onClick={() => toggleModalViolation(v.code)} title={v.desc}
+                          className={`px-3 py-1.5 text-sm font-bold rounded shadow-sm border transition-colors ${isSelected ? (v.isNormal ? 'bg-green-600 text-white border-green-700' : 'bg-red-500 text-white border-red-600') : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'}`}
+                        >
+                          {v.code}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <textarea name="remark" value={formData.remark} onChange={handleChange} rows="3" placeholder="備註說明" className="border p-2 rounded w-full mt-2"></textarea>
               </form>
             </div>
             <div className="p-4 border-t flex justify-end space-x-3">
