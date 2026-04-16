@@ -100,7 +100,7 @@
           snapshot.forEach(doc => {
             const docData = doc.data();
             if (!docData.violationCodes && docData.violationCode) {
-               docData.violationCodes = [docData.violationCode];
+               docData.violationCodes = docData.violationCode.split(',');
             } else if (!docData.violationCodes) {
                docData.violationCodes = ['✓'];
             }
@@ -404,6 +404,7 @@
     function BackendView({ records, addRecords, deleteRecord, updateRecord, showToast }) {
       const [filterDate, setFilterDate] = useState(new Date().toISOString().split('T')[0]);
       const [filterOffice, setFilterOffice] = useState('');
+      const [filterHOnly, setFilterHOnly] = useState(false);
       const [editingRecord, setEditingRecord] = useState(null);
       const [showAddModal, setShowAddModal] = useState(false);
       
@@ -420,8 +421,9 @@
         return records
           .filter(r => filterDate ? r.date === filterDate : true)
           .filter(r => filterOffice ? r.office === filterOffice : true)
+          .filter(r => filterHOnly ? (r.violationCodes || []).includes('H') : true)
           .sort((a, b) => b.timestamp - a.timestamp);
-      }, [records, filterDate, filterOffice]);
+      }, [records, filterDate, filterOffice, filterHOnly]);
 
       const handleEmailTeacher = async (r) => {
         const codes = r.violationCodes || ['✓'];
@@ -630,10 +632,14 @@
           </div>
 
           <div className="bg-white p-4 rounded-xl shadow border flex flex-col lg:flex-row justify-between items-center gap-4">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <span className="bg-gray-100 p-2 rounded-md emoji-icon">🔍</span>
               <input type="date" className="border rounded p-2 text-sm" value={filterDate} onChange={e => setFilterDate(e.target.value)} />
               <select className="border rounded p-2 text-sm" value={filterOffice} onChange={e => setFilterOffice(e.target.value)}><option value="">所有處室</option>{OFFICES.map(o => <option key={o}>{o}</option>)}</select>
+              <label className="flex items-center space-x-1 text-sm font-medium text-red-600 bg-red-50 px-2 py-1.5 rounded cursor-pointer border border-red-200">
+                <input type="checkbox" checked={filterHOnly} onChange={e => setFilterHOnly(e.target.checked)} className="rounded text-red-600 focus:ring-red-500" />
+                <span>只看 [H] 滯留需要通知</span>
+              </label>
             </div>
             
             <div className="flex flex-wrap items-center justify-center gap-2">
@@ -654,19 +660,22 @@
                 {filteredRecords.length === 0 ? <tr><td colSpan="6" className="text-center p-10 text-gray-500"><div className="text-4xl emoji-icon">📄</div>無紀錄</td></tr> : 
                   filteredRecords.map(r => {
                     const isNormal = (r.violationCodes||['✓']).includes('✓');
+                    const isH = (r.violationCodes||[]).includes('H');
                     return (
-                    <tr key={r.id}>
+                    <tr key={r.id} className={isH ? "bg-red-50/50" : ""}>
                       <td className="px-4 py-3 text-sm">{r.date}<br/><span className="text-gray-500 text-xs">{r.period}</span></td>
                       <td className="px-4 py-3 text-sm">{r.name}<br/><span className="text-gray-500 text-xs">{r.office}</span></td>
                       <td className="px-4 py-3 text-sm font-bold text-blue-700">{r.classId}<br/><span className="text-gray-500 text-xs font-normal">{r.teacher || '-'}</span></td>
                       <td className="px-4 py-3 text-sm">
                         <div className="flex flex-wrap gap-1">
-                          {(r.violationCodes || ['✓']).map(c => <span key={c} className={`px-2 py-0.5 rounded text-xs font-bold ${isNormal ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{c}</span>)}
+                          {(r.violationCodes || ['✓']).map(c => <span key={c} className={`px-2 py-0.5 rounded text-xs font-bold ${c === 'H' ? 'bg-red-500 text-white shadow-sm' : (isNormal ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800')}`}>{c}</span>)}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-sm max-w-[200px] truncate" title={r.remark}>{r.remark || '-'} {r.photo && <img src={r.photo} className="h-8 w-8 mt-1 border cursor-pointer" onClick={() => window.open(r.photo)} />}</td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
-                        <button onClick={() => handleEmailTeacher(r)} className="text-blue-600 bg-blue-50 p-2 rounded mr-1 emoji-icon" title="發送 Email 通知任課老師">✉️</button>
+                        {isH && (
+                          <button onClick={() => handleEmailTeacher(r)} className="text-white bg-red-500 hover:bg-red-600 px-3 py-1.5 rounded mr-2 text-xs font-bold shadow-sm transition-colors" title="發送 Email 通知任課老師">✉️ 發送通知</button>
+                        )}
                         <button onClick={() => setEditingRecord(r)} className="text-indigo-600 bg-indigo-50 p-2 rounded mr-1 emoji-icon" title="編輯">✏️</button>
                         <button onClick={() => { if(window.confirm("刪除這筆？")) { deleteRecord(r.id); showToast("已刪除"); } }} className="text-red-600 bg-red-50 p-2 rounded emoji-icon" title="刪除">🗑️</button>
                       </td>
