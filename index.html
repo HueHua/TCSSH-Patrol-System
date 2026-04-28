@@ -193,6 +193,10 @@
       const getEmptyRow = () => ({ id: crypto.randomUUID(), classId: '', teacher: '', violationCodes: ['✓'], remark: '', photo: null });
       const [draftRows, setDraftRows] = useState([getEmptyRow()]);
       const [isSubmitting, setIsSubmitting] = useState(false);
+      
+      // 新增：快速選班狀態面板
+      const [showQuickSelect, setShowQuickSelect] = useState(false);
+      const [quickGrade, setQuickGrade] = useState(1);
 
       const compressImage = (file, maxWidth = 800, maxHeight = 800, quality = 0.6) => {
         return new Promise((resolve) => {
@@ -231,6 +235,20 @@
       const removeRow = (id) => {
         if (draftRows.length === 1) setDraftRows([getEmptyRow()]);
         else setDraftRows(prev => prev.filter(row => row.id !== id));
+      };
+
+      // 新增：快速點擊自動新增班級功能
+      const handleQuickAddClass = (classId) => {
+        const emptyRowIndex = draftRows.findIndex(r => r.classId === '' && r.remark === '' && r.violationCodes.length === 1 && r.violationCodes[0] === '✓');
+        if (emptyRowIndex >= 0) {
+            setDraftRows(prev => {
+                const next = [...prev];
+                next[emptyRowIndex] = { ...next[emptyRowIndex], classId };
+                return next;
+            });
+        } else {
+            setDraftRows(prev => [...prev, { ...getEmptyRow(), classId }]);
+        }
       };
 
       const toggleViolation = (rowId, code) => {
@@ -295,6 +313,13 @@
 
       return (
         <div className="space-y-6">
+          {/* 新增：跑班選課課表快速連結 */}
+          <div className="bg-white rounded-xl shadow-sm border border-blue-100 overflow-hidden">
+             <a href="https://docs.google.com/spreadsheets/d/11zpB-oBpUVQsU9whvLjyiuNYOwQq7_lOZkT90fjCyJU/edit?usp=sharing" target="_blank" rel="noreferrer" className="flex items-center justify-center w-full bg-blue-50 text-blue-700 py-3 hover:bg-blue-100 transition-colors font-bold text-sm sm:text-base">
+                <span className="mr-2 text-xl emoji-icon">🔗</span> 點此查詢【跑班選課】課表 (另開視窗)
+             </a>
+          </div>
+
           <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
             <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center border-b pb-2">
               <span className="bg-blue-600 text-white w-6 h-6 rounded-full inline-flex items-center justify-center text-sm mr-2">1</span>
@@ -314,6 +339,48 @@
               <h2 className="text-lg font-bold text-gray-800 flex items-center">
                 <span className="bg-blue-600 text-white w-6 h-6 rounded-full inline-flex items-center justify-center text-sm mr-2">2</span>填寫班級狀況
               </h2>
+              <div className="flex space-x-2">
+                <button onClick={() => setShowQuickSelect(!showQuickSelect)} className={`text-sm px-3 py-1.5 rounded-md flex items-center font-medium transition-colors ${showQuickSelect ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200'}`}>
+                  <span className="mr-1 emoji-icon">⚡</span> 快速選班
+                </button>
+              </div>
+            </div>
+
+            {/* 新增：快速選班 UI 面板 */}
+            {showQuickSelect && (
+              <div className="bg-indigo-50 p-3 rounded-lg mb-4 border border-indigo-100">
+                 <div className="flex space-x-2 mb-3">
+                   {[1, 2, 3].map(g => (
+                     <button key={g} onClick={() => setQuickGrade(g)} className={`flex-1 py-1.5 rounded-md font-bold text-sm transition-colors ${quickGrade === g ? 'bg-indigo-500 text-white shadow' : 'bg-white text-indigo-600 border border-indigo-200'}`}>
+                       高{['一','二','三'][g-1]}
+                     </button>
+                   ))}
+                 </div>
+                 <div className="grid grid-cols-5 sm:grid-cols-8 gap-1.5">
+                   {Array.from({length: 25}, (_, i) => {
+                     const classNum = String(i + 1).padStart(2, '0');
+                     const classId = `${quickGrade}${classNum}`;
+                     const isAdded = draftRows.some(r => r.classId === classId);
+                     return (
+                       <button key={classId} onClick={() => handleQuickAddClass(classId)} disabled={isAdded} className={`py-2 rounded border text-sm font-medium ${isAdded ? 'bg-gray-200 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-700 border-gray-300 hover:bg-indigo-100 hover:border-indigo-300 hover:text-indigo-700 shadow-sm'}`}>
+                         {classId}
+                       </button>
+                     );
+                   })}
+                 </div>
+                 <div className="mt-2 text-xs text-indigo-500 text-right font-medium">💡 點擊上方按鈕，即可瞬間建立班級欄位</div>
+              </div>
+            )}
+
+            <div className="bg-yellow-50 text-yellow-800 p-3 rounded-lg text-xs sm:text-sm mb-4 border border-yellow-200">
+              <div className="font-bold mb-1">💡 違規代號說明(可複選)：</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-1">
+                {VIOLATIONS.map(v => (
+                  <div key={v.code} className="truncate">
+                    <span className={`font-bold mr-1 ${v.isNormal ? 'text-green-600' : 'text-red-600'}`}>[{v.code}]</span> {v.desc}
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="space-y-4">
@@ -333,7 +400,7 @@
                     </div>
                     
                     <div className="md:col-span-3">
-                      <label className="block text-xs font-medium text-gray-500 mb-2 md:hidden">狀況代號 (可點擊複選)</label>
+                      <label className="block text-xs font-medium text-gray-500 mb-1 md:hidden">狀況代號(可點擊複選)</label>
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-1">
                         {VIOLATIONS.map(v => {
                           const isSelected = row.violationCodes.includes(v.code);
@@ -407,15 +474,13 @@
       const [filterHOnly, setFilterHOnly] = useState(false);
       const [editingRecord, setEditingRecord] = useState(null);
       const [showAddModal, setShowAddModal] = useState(false);
-      const [emailModal, setEmailModal] = useState(null); // 新增 Email 預覽視窗狀態
+      const [emailModal, setEmailModal] = useState(null); 
       
       const fileInputRef = useRef(null); 
 
       // ==========================================
       // ★ 教學組公用帳號發信設定區 ★
       // ==========================================
-      // 請將您從 Google Apps Script 部署取得的「網頁應用程式網址」貼在雙引號裡面
-      // 例如: "https://script.google.com/macros/s/AKfycby.../exec"
       const EMAIL_API_URL = ""; 
       
       const filteredRecords = useMemo(() => {
@@ -426,7 +491,6 @@
           .sort((a, b) => b.timestamp - a.timestamp);
       }, [records, filterDate, filterOffice, filterHOnly]);
 
-      // 打開 Email 預覽視窗
       const openEmailModal = (r) => {
         const codes = r.violationCodes || ['✓'];
         const descText = codes.map(c => {
@@ -444,18 +508,16 @@
         setEmailModal({ to: '', subject, body: bodyText });
       };
 
-      // 實際執行發送
       const executeSendEmail = async () => {
         if (!emailModal.to) return alert("請輸入任課老師信箱");
 
         if (EMAIL_API_URL && EMAIL_API_URL.startsWith("http")) {
-            // 已設定 GAS 網址：隱藏在背景自動用公用帳號寄出
             try {
                 showToast("📧 信件背景發送中...");
                 const toEmail = emailModal.to;
                 const subjectStr = emailModal.subject;
                 const bodyStr = emailModal.body;
-                setEmailModal(null); // 先關閉視窗
+                setEmailModal(null); 
 
                 const formData = new URLSearchParams();
                 formData.append('to', toEmail);
@@ -464,7 +526,7 @@
 
                 await fetch(EMAIL_API_URL, {
                     method: 'POST',
-                    mode: 'no-cors', // 避免跨網域阻擋
+                    mode: 'no-cors', 
                     body: formData
                 });
                 
@@ -473,9 +535,8 @@
                 alert("發送失敗，請檢查網路連線");
             }
         } else {
-            // 尚未設定網址：退回使用點擊者的本機 Email 軟體寄信
             window.location.href = `mailto:${emailModal.to}?subject=${encodeURIComponent(emailModal.subject)}&body=${encodeURIComponent(emailModal.body)}`;
-            setEmailModal(null); // 關閉視窗
+            setEmailModal(null); 
         }
       };
 
