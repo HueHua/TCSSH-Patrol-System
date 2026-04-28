@@ -194,8 +194,7 @@
       const [draftRows, setDraftRows] = useState([getEmptyRow()]);
       const [isSubmitting, setIsSubmitting] = useState(false);
       
-      // 新增：快速選班狀態面板
-      const [showQuickSelect, setShowQuickSelect] = useState(false);
+      // 保留年級狀態供底部面板使用
       const [quickGrade, setQuickGrade] = useState(1);
 
       const compressImage = (file, maxWidth = 800, maxHeight = 800, quality = 0.6) => {
@@ -237,7 +236,6 @@
         else setDraftRows(prev => prev.filter(row => row.id !== id));
       };
 
-      // 新增：快速點擊自動新增班級功能
       const handleQuickAddClass = (classId) => {
         const emptyRowIndex = draftRows.findIndex(r => r.classId === '' && r.remark === '' && r.violationCodes.length === 1 && r.violationCodes[0] === '✓');
         if (emptyRowIndex >= 0) {
@@ -304,6 +302,8 @@
           showToast(`已成功送出 ${validRows.length} 筆紀錄至雲端！`);
           const remainingDrafts = draftRows.filter(draft => !validRows.some(valid => valid.id === draft.id));
           setDraftRows(remainingDrafts.length > 0 ? remainingDrafts : [getEmptyRow()]);
+          // 提交成功後畫面自動捲動至頂部方便下一輪巡視
+          window.scrollTo({ top: 0, behavior: 'smooth' });
         } catch (err) {
           alert("送出失敗，請確認網路連線！"); console.error(err);
         } finally {
@@ -313,7 +313,7 @@
 
       return (
         <div className="space-y-6">
-          {/* 新增：跑班選課課表快速連結 */}
+          {/* 跑班選課課表快速連結 */}
           <div className="bg-white rounded-xl shadow-sm border border-blue-100 overflow-hidden">
              <a href="https://docs.google.com/spreadsheets/d/11zpB-oBpUVQsU9whvLjyiuNYOwQq7_lOZkT90fjCyJU/edit?usp=sharing" target="_blank" rel="noreferrer" className="flex items-center justify-center w-full bg-blue-50 text-blue-700 py-3 hover:bg-blue-100 transition-colors font-bold text-sm sm:text-base">
                 <span className="mr-2 text-xl emoji-icon">🔗</span> 點此查詢【跑班選課】課表 (另開視窗)
@@ -339,38 +339,7 @@
               <h2 className="text-lg font-bold text-gray-800 flex items-center">
                 <span className="bg-blue-600 text-white w-6 h-6 rounded-full inline-flex items-center justify-center text-sm mr-2">2</span>填寫班級狀況
               </h2>
-              <div className="flex space-x-2">
-                <button onClick={() => setShowQuickSelect(!showQuickSelect)} className={`text-sm px-3 py-1.5 rounded-md flex items-center font-medium transition-colors ${showQuickSelect ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200'}`}>
-                  <span className="mr-1 emoji-icon">⚡</span> 快速選班
-                </button>
-              </div>
             </div>
-
-            {/* 新增：快速選班 UI 面板 */}
-            {showQuickSelect && (
-              <div className="bg-indigo-50 p-3 rounded-lg mb-4 border border-indigo-100">
-                 <div className="flex space-x-2 mb-3">
-                   {[1, 2, 3].map(g => (
-                     <button key={g} onClick={() => setQuickGrade(g)} className={`flex-1 py-1.5 rounded-md font-bold text-sm transition-colors ${quickGrade === g ? 'bg-indigo-500 text-white shadow' : 'bg-white text-indigo-600 border border-indigo-200'}`}>
-                       高{['一','二','三'][g-1]}
-                     </button>
-                   ))}
-                 </div>
-                 <div className="grid grid-cols-5 sm:grid-cols-8 gap-1.5">
-                   {Array.from({length: 25}, (_, i) => {
-                     const classNum = String(i + 1).padStart(2, '0');
-                     const classId = `${quickGrade}${classNum}`;
-                     const isAdded = draftRows.some(r => r.classId === classId);
-                     return (
-                       <button key={classId} onClick={() => handleQuickAddClass(classId)} disabled={isAdded} className={`py-2 rounded border text-sm font-medium ${isAdded ? 'bg-gray-200 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-700 border-gray-300 hover:bg-indigo-100 hover:border-indigo-300 hover:text-indigo-700 shadow-sm'}`}>
-                         {classId}
-                       </button>
-                     );
-                   })}
-                 </div>
-                 <div className="mt-2 text-xs text-indigo-500 text-right font-medium">💡 點擊上方按鈕，即可瞬間建立班級欄位</div>
-              </div>
-            )}
 
             <div className="bg-yellow-50 text-yellow-800 p-3 rounded-lg text-xs sm:text-sm mb-4 border border-yellow-200">
               <div className="font-bold mb-1">💡 違規代號說明(可複選)：</div>
@@ -437,10 +406,37 @@
               )})}
             </div>
 
-            <div className="mt-4">
-              <button onClick={addRow} className="w-full py-3 bg-blue-50 text-blue-700 border border-blue-200 border-dashed rounded-lg hover:bg-blue-100 font-bold flex justify-center items-center transition-colors">
-                <span className="text-xl mr-2 emoji-icon">➕</span> 繼續新增下一個班級
-              </button>
+            {/* 新版底部常駐：快速新增班級面板 */}
+            <div className="mt-6 bg-indigo-50 p-4 rounded-xl border border-indigo-100 shadow-inner">
+               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-3 border-b border-indigo-100 pb-3 gap-3">
+                 <div className="font-bold text-indigo-800 flex items-center text-base sm:text-lg">
+                    <span className="text-xl mr-1 emoji-icon">⚡</span> 快速新增下一個班級
+                 </div>
+                 <button onClick={addRow} className="text-xs sm:text-sm bg-white text-indigo-600 border border-indigo-200 px-3 py-2 rounded-md hover:bg-indigo-100 font-medium transition-colors shadow-sm self-start sm:self-auto">
+                   ➕ 手動新增空白列
+                 </button>
+               </div>
+               
+               <div className="flex space-x-2 mb-3">
+                 {[1, 2, 3].map(g => (
+                   <button key={g} onClick={() => setQuickGrade(g)} className={`flex-1 py-2 rounded-md font-bold text-sm sm:text-base transition-colors ${quickGrade === g ? 'bg-indigo-500 text-white shadow-md' : 'bg-white text-indigo-600 border border-indigo-200 hover:bg-indigo-100'}`}>
+                     高{['一','二','三'][g-1]}
+                   </button>
+                 ))}
+               </div>
+               
+               <div className="grid grid-cols-5 sm:grid-cols-8 gap-1.5 sm:gap-2">
+                 {Array.from({length: 25}, (_, i) => {
+                   const classNum = String(i + 1).padStart(2, '0');
+                   const classId = `${quickGrade}${classNum}`;
+                   const isAdded = draftRows.some(r => r.classId === classId);
+                   return (
+                     <button key={classId} onClick={() => handleQuickAddClass(classId)} disabled={isAdded} className={`py-2.5 rounded border text-sm sm:text-base font-bold transition-colors ${isAdded ? 'bg-indigo-100 text-indigo-300 border-indigo-100 cursor-not-allowed' : 'bg-white text-indigo-700 border-indigo-200 hover:bg-indigo-500 hover:text-white hover:border-indigo-500 shadow-sm'}`}>
+                       {classId}
+                     </button>
+                   );
+                 })}
+               </div>
             </div>
 
             <div className="mt-6 pt-4 border-t flex justify-end">
